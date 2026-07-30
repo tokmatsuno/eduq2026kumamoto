@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>令和8年熊本地震｜取引校 対応状況ダッシュボード</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#111c33; --panel2:#16233f; --line:#25324d;
+    --text:#e6edf7; --muted:#94a3b8; --accent:#38bdf8;
+    --s7:#7f1d1d; --s6s:#dc2626; --s6w:#ea580c; --s5s:#f59e0b; --s5w:#eab308; --s4:#84cc16; --s3:#22c55e;
+    --dmg:#e11d48;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  #app{display:flex;flex-direction:column;height:100vh}
+  header{padding:10px 16px;background:linear-gradient(90deg,#7f1d1d,#b91c1c);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.02em}
+  header .meta{font-size:11.5px;color:#fee2e2;margin-left:auto}
+  .layout{flex:1;display:flex;min-height:0}
+  #sidebar{width:360px;max-width:42vw;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:14px}
+  #map{flex:1;min-width:0}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+  .card h2{font-size:12.5px;margin:0 0 8px;color:var(--accent);letter-spacing:.04em}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .kpi{background:#0d1830;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .kpi b{display:block;font-size:20px;line-height:1.1}
+  .kpi span{font-size:11px;color:var(--muted)}
+  .disclaimer{font-size:11px;line-height:1.6;color:#fde68a;background:#3a2d0a;border:1px solid #7c5e12;border-radius:8px;padding:10px}
+  .filters label{display:flex;align-items:center;gap:7px;font-size:12.5px;padding:3px 0;cursor:pointer}
+  .filters input{accent-color:var(--accent)}
+  .legend-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 0}
+  .dot{width:13px;height:13px;border-radius:50%;flex:0 0 auto;border:2px solid #fff3}
+  .swatch{width:13px;height:13px;border-radius:3px;flex:0 0 auto}
+  ul.schoollist{list-style:none;margin:0;padding:0}
+  ul.schoollist li{padding:8px 9px;border:1px solid var(--line);border-radius:8px;margin-bottom:7px;cursor:pointer;background:#0d1830;transition:.15s}
+  ul.schoollist li:hover{border-color:var(--accent);background:#12203d}
+  .sl-name{font-size:13px;font-weight:600}
+  .sl-sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:99px;margin-left:6px;vertical-align:middle;color:#fff}
+  .pill{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin-right:4px}
+  a{color:var(--accent)}
+  .lp{font-size:12px}
+  .lp b{font-size:14px}
+  .lp table{border-collapse:collapse;margin:6px 0;font-size:12px}
+  .lp td{padding:2px 6px;vertical-align:top}
+  .lp td.k{color:#475569;white-space:nowrap;font-weight:600}
+  .lp .src a{display:block;margin:2px 0}
+  .lp .tel{font-size:15px;font-weight:700;color:#b91c1c}
+  .foot{font-size:10.5px;color:var(--muted);line-height:1.6;margin-top:4px}
+  @media(max-width:720px){
+    .layout{flex-direction:column}#sidebar{width:100%;max-width:none;max-height:44vh}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>令和8年熊本地震 ｜ 取引校 対応状況ダッシュボード</h1>
+    <div class="meta">発災：2026/07/28 16:27 ・ M7.1 ・ 最大震度7（宇城市・氷川町）<br>
+      <span id="last-updated">最終更新：—</span> ／ 自動更新：2時間ごと</div>
+  </header>
+  <div class="layout">
+    <aside id="sidebar">
+      <div class="card">
+        <h2>概況（KPI）</h2>
+        <div class="kpis">
+          <div class="kpi"><b id="kpi-client">–</b><span>プロット中の顧客校</span></div>
+          <div class="kpi"><b id="kpi-kumamoto">–</b><span>うち熊本県内</span></div>
+          <div class="kpi"><b id="kpi-high">–</b><span>震度6弱以上の地域の校</span></div>
+          <div class="kpi"><b id="kpi-confirm">–</b><span>状況「確認中」</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>⚠ データの取り扱い</h2>
+        <div class="disclaimer">
+          本ダッシュボードは<strong>発災翌日（2026/07/29 時点）</strong>の暫定情報です。<br>
+          ・各校の安否／授業／被害は<strong>公式発表が確認できたものだけ</strong>を記載し、未確認は「確認中」と表示しています（推測での断定はしていません）。<br>
+          ・色は<strong>気象庁の市町村別震度から推定した「要確認度」</strong>で、実被害を示すものではありません。<br>
+          ・熊本県外の九州各校は<strong>市の代表座標（目安）</strong>です。連絡先・状況は各校公式で要確認。<br>
+          ・SNS（X・note等）由来の情報は<strong>未確認情報</strong>として区別表示しています。個人（生徒・保護者）の投稿は<strong>個人が特定される内容を転載せず</strong>、傾向の把握にとどめています。
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>更新フィード（時系列）</h2>
+        <div class="filters" style="margin-bottom:8px">
+          <label><input type="checkbox" class="sflt" value="公式" checked> 公式（学校・行政・教委）</label>
+          <label><input type="checkbox" class="sflt" value="報道" checked> 報道</label>
+          <label><input type="checkbox" class="sflt" value="SNS" checked> SNS（X・note／未確認）</label>
+        </div>
+        <ul class="schoollist" id="feed-list"></ul>
+      </div>
+
+      <div class="card filters">
+        <h2>表示フィルタ</h2>
+        <label><input type="checkbox" class="flt" value="client" checked> 顧客校（教育と探求社 取引校）</label>
+        <label><input type="checkbox" class="flt" value="ref" checked> 参考：主な被害地点・震源</label>
+        <label><input type="checkbox" class="flt" value="kumaonly"> 熊本県のみ表示</label>
+      </div>
+
+      <div class="card">
+        <h2>凡例：要確認度（推定・震度ベース）</h2>
+        <div class="legend-row"><span class="dot" style="background:var(--s7)"></span> 震度7 地域 ＝ 最優先で確認</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s6s)"></span> 震度6強 地域</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s6w)"></span> 震度6弱 地域</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s5s)"></span> 震度5強 地域</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s5w)"></span> 震度5弱 地域</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s4)"></span> 震度4 地域</div>
+        <div class="legend-row"><span class="dot" style="background:var(--s3)"></span> 震度3以下</div>
+        <div class="legend-row"><span class="swatch" style="background:var(--dmg);border-radius:50%"></span> ■ 参考：報道された被害地点・震源</div>
+      </div>
+
+      <div class="card">
+        <h2>顧客校一覧（クリックで地図移動）</h2>
+        <ul class="schoollist" id="school-list"></ul>
+      </div>
+
+      <div class="card">
+        <div class="foot">
+          出典：気象庁「令和8年熊本地震」関連情報／ウェザーニュース（市町村別震度・被害）／NHK・日本経済新聞（被害報道）／各校公式サイト・所在地情報。<br>
+          顧客校リストは社内「導入校リスト／都道府県別導入校」等より抽出。掲載は社内確認用途。
+        </div>
+      </div>
+    </aside>
+    <div id="map"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+/* ===== FEED_START ===== 自動更新スクリプトがこのブロックを置き換えます =====
+   src: '公式' | '報道' | 'SNS'
+   SNSは未確認情報。個人特定情報は載せない。
+*/
+const LAST_UPDATED = '2026-07-31 06:25 JST';
+const FEED = [
+  {ts:'2026-07-31 06:25', src:'報道', who:'RKK熊本放送／熊本県発表（7/28 18時）',
+   title:'校舎被害を名指しされた私立8校に取引校3校は含まれず（校舎被害の精査結果）',
+   body:'取引校3校の校舎被害（外壁破損等）を精査。7/28 18時の県発表（RKK報道）で建物の物的被害が名指しされたのは私立高8校——熊本中央（体育館天井破損・校舎に亀裂・寮壁破損）、開新（記念会館の外壁に亀裂）、九州学院（天井ボード落下ほか）、慶誠、熊本国府、文徳、八代白百合（水道管破裂）、城北（武道場屋根が約30cm崩落）で、取引校のクラーク熊本・熊本県立熊本商業・九州看護福祉大はいずれも含まれない。九看大の対面授業中止・構内立入自粛（7/29付）も理由は「余震継続による安全確保」で校舎被害の記載なし。文科省第2報（7/29 10時）の県内物的被害109校は個別校名非公表。結論：取引校3校の校舎被害は現時点で公式・報道とも確認できず。',
+   url:'https://news.yahoo.co.jp/articles/f0defa7a37df802bb39eb20772c4052b92bfe158'},
+  {ts:'2026-07-31 06:07', src:'公式', who:'取引校クロール（自動）',
+   title:'7/31 6時クロール：新規情報なし（取引校3校・行政・報道とも前回4時から変化なし）',
+   body:'7/31 6時の自動クロールを実施。前回（7/31 4時）から新規情報なし。取引校の熊本県内3校は変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はトピックス一覧で最新7/20付（本日7/31時点で明日8/1のオープンキャンパス・学校説明会・個別相談会は中止告知なく掲載継続）、熊本商業高校は公式サイトがJS描画のためweb_fetchでは本文取得できず、フォールバックのWeb検索でも地震関連の休校・被害告知は確認できず。行政も熊本市（新着は7/29更新分が最新）・県災害対策本部（第4回7/29 16時が最新で更新日7/29のまま）・気象庁（第3報が最新、最大震度5弱以上の一覧は7/28 23時時点のまま）に本震以降の新規掲載は確認できず。報道の死者数も関連調査中含め34人（7/30 16時会議・熊日）・県確定集計18人（7/30 11時）で前回から変化なし。余震はYahoo!天気で7/31 00:21に熊本地方で最大震度1を確認したが軽微（前回クロール4:07以前の発生）で、以降に新たな有感地震の告知は確認できず。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-31 04:07', src:'公式', who:'取引校クロール（自動）',
+   title:'7/31 4時クロール：新規情報なし（取引校3校・行政・報道とも前回2時から変化なし）',
+   body:'7/31 4時の自動クロールを実施。前回（7/31 2時）から新規情報なし。取引校の熊本県内3校は変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はトピックス一覧で最新7/20付（8/1のオープンキャンパス・学校説明会・個別相談会は中止告知なく掲載継続）、熊本商業高校は公式サイトがJS描画のためweb_fetchでは本文取得できず、フォールバックのWeb検索でも地震関連の休校・被害告知は確認できず（前回までのブラウザ確認では最新7/13付）。行政も熊本市（新着は7/29更新分が最新）・県災害対策本部（第4回7/29 16時が最新で更新日7/29のまま）・気象庁（第3報が最新、最大震度5弱以上の一覧は7/28 23時時点のまま）に本震以降の新規掲載は確認できず。報道の死者数も関連調査中含め34人（7/30 16時会議）・県確定集計18人（7/30 11時）で前回から変化なし。イオンモール熊本はNHK記事本文が5人死亡・1人心肺停止のままで、検索見出しの「7人死亡」は本文に未反映で確認中（取引校の所在地ではない）。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-31 02:07', src:'公式', who:'取引校クロール（自動）',
+   title:'7/31 2時クロール：新規情報なし（取引校3校・行政・報道とも前回0時から変化なし）',
+   body:'7/31 2時の自動クロールを実施。前回（7/31 0時）から新規情報なし。取引校の熊本県内3校は変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はトピックス一覧で最新7/20付（明日8/1のオープンキャンパス・学校説明会は中止告知なく掲載継続）、熊本商業高校はブラウザ描画で確認し最新7/13付（バレーボール部の記事）と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分が最新）・県災害対策本部（第4回7/29 16時が最新で更新日7/29のまま）・県情報ページ（更新日7/28）・気象庁（第3報が最新、最大震度5弱以上の一覧は7/28 23時時点のまま）に本震以降の新規掲載は確認できず。報道の死者数も関連調査中含め34人（7/30 16時会議）・県確定集計18人（7/30 11時）で前回から変化なし。県内では熊本大が7/31も終日休講で8/3以降の授業案内を本日15時頃に発表予定。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-31 00:07', src:'公式', who:'取引校クロール（自動）',
+   title:'7/31 0時クロール：取引校3校に変化なし／文科省の学校再開・安全確保通知（7/29）を新規追記',
+   body:'7/31 0時の自動クロールを実施。取引校の熊本県内3校は前回（7/30 22時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はトピックス一覧で最新7/20付（8/1のオープンキャンパス・学校説明会は中止告知なく掲載継続）、熊本商業高校はブラウザ描画で確認し最新7/13付（バレーボール部の記事）と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分が最新）・県災害対策本部（第4回7/29 16時が最新で更新日7/29のまま）・県情報ページ（更新日7/28）・気象庁（第3報が最新、最大震度5弱以上の一覧は7/28 23時時点のまま）に本震以降の新規掲載は確認できず。今回新たに、文科省が7/29付で発出した学校再開・安全確保等の通知（下記）とJASSOの被災学生支援を確認し追記した。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-30 11:15', src:'報道', who:'ReseEd（リシード）／文部科学省',
+   title:'文科省：被災児童生徒の安全確保・学校再開に関する通知を発出（7/29）',
+   body:'文科省は7/29、令和8年熊本地震で被災した児童生徒等の安全確保・就学機会確保について各教育委員会・知事・学校法人等に通知。校舎等の安全確認と応急復旧、応急危険度判定、断水・停電時の給水車や仮設トイレの手配、通学路変更の検討などを求めた。あわせて「避難所としての普通教室等の活用」通知も発出し、猛暑下の熱中症懸念から空調のある普通教室の活用検討を要請。教科書の無償給与・就学援助・授業料減免等の就学支援も示した。取引校を含む県内校の再開判断に関わる枠組み。',
+   url:'https://reseed.resemom.jp/article/2026/07/30/13817.html'},
+  {ts:'2026-07-30 16:15', src:'報道', who:'ReseEd（リシード）／JASSO',
+   title:'JASSO：被災学生に10万円の支援金を支給と公表（7/29）',
+   body:'日本学生支援機構（JASSO）は7/29、令和8年熊本地震で被災した学生への支援金（10万円）支給を公表したと報じられた。取引校の九州看護福祉大など県内大学の在学生も対象となりうる。詳細・申請方法は各校・JASSO公式で要確認。',
+   url:'https://reseed.resemom.jp/article/2026/07/30/13819.html'},
+  {ts:'2026-07-30 22:07', src:'公式', who:'取引校クロール（自動）',
+   title:'22時再クロール：取引校3校に変化なし／県公式の死者数18人（7/30 11時）を追記',
+   body:'7/30 22時の再クロールを実施。取引校の熊本県内3校は前回（20時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はトピックス一覧で最新7/20付（8/1オープンキャンパスの中止告知は出ていない）、熊本商業高校はブラウザ描画で確認し最新7/13付（バレーボール部の記事）と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（ページ上は第4回7/29 16時が最新で第5回資料は未掲載・更新日は7/29のまま）・気象庁（第3報が最新）に本震以降の新規掲載は確認できず。報道では県の確定集計の死者数が11時時点で18人に更新された（下記）。なおイオンモール熊本（嘉島町）の死者を「7人」とするNHK見出しを引き続き確認したが、記事URLの直接取得では5人死亡（10:02付）のままで時点差が解消せず確認中（取引校の所在地ではない）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 11:30', src:'報道', who:'日本経済新聞／読売新聞',
+   title:'県公式：死者18人・心肺停止6人（7/30 11時時点）',
+   body:'熊本県は7/30 11時時点で死者18人・心肺停止6人と発表したと報じられた（同日9:30時点の17人から1人増）。これは県の確定集計で、同日16時の災害対策本部会議で発表された「関連調査中を含め34人」とは基準が異なる。取引校所在の熊本市・玉名市に新たな被害計上は確認できず。※時刻は報道時点からの推定。',
+   url:'https://www.nikkei.com/article/DGXZQOUD29B730Z20C26A7000000/'},
+  {ts:'2026-07-30 20:07', src:'公式', who:'取引校クロール（自動）',
+   title:'20時再クロール：取引校3校に変化なし（18時から新規情報なし）',
+   body:'7/30 20時の再クロールを実施。取引校の熊本県内3校は前回（18時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はブラウザ確認で最新7/20付（8/1オープンキャンパスの中止告知は出ていない）、熊本商業高校もブラウザ描画で確認し最新7/13付と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（ページ上は第4回7/29 16時が最新で第5回資料は未掲載・更新日は7/29のまま）・気象庁に本震以降の新規掲載は確認できず。報道の死者数は関連調査中を含め34人（7/30 16時会議）で前回から変化なし。なお検索インデックス上にイオンモール熊本の死者を「7人」とするNHK見出しを確認したが、記事本文の直接取得では5人死亡（10:02付）のままで時点差の可能性があり確認中（取引校の所在地ではない）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 18:07', src:'公式', who:'取引校クロール（自動）',
+   title:'18時再クロール：取引校3校に変化なし／30日16時 災害対策本部会議で関連調査中含め死者34人の報道を追記',
+   body:'7/30 18時の再クロールを実施。取引校の熊本県内3校は前回（16時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はブラウザ確認で最新7/20付（8/1オープンキャンパスの中止告知は出ていない）、熊本商業高校もブラウザ描画で確認し最新7/13付と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（ページ上は第4回7/29 16時が最新で第5回資料は未掲載）・気象庁（第3報が最新）に本震以降の新規掲載は確認できず。報道では30日16時の災害対策本部会議に関する死者数の更新を確認（下記）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 16:30', src:'報道', who:'NHK',
+   title:'県災害対策本部：関連調査中を含め死者34人と発表（7/30 16時 会議）',
+   body:'NHKによると、熊本県は7/30 16時からの災害対策本部会議で、災害との関連を調査中の人を含め県内で34人が死亡したと発表（報道見出し）。同日9:30時点の県確定集計（死亡17人・心肺停止6人・安否不明1人）から、関連調査中を含む基準で増加したもので、県の確定集計とは基準が異なる。取引校所在の熊本市・玉名市に新たな被害計上は確認できず。※時刻は会議開始（16時）からの推定。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190421000'},
+  {ts:'2026-07-30 16:07', src:'公式', who:'取引校クロール（自動）',
+   title:'16時再クロール：新規情報なし（取引校3校・行政・報道とも前回14時から変化なし）',
+   body:'7/30 16時の再クロールを実施。取引校の熊本県内3校は前回（14時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本はブラウザ確認で最新7/20付（8/1オープンキャンパスの中止告知は出ていない）、熊本商業高校はブラウザ描画で確認し最新7/13付と、いずれも地震関連の休校・被害告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（第4回7/29 16時が最新、第5回は未掲載）・気象庁（第3報が最新）に本震以降の新規掲載は確認できず。報道の死者数も17人（7/30 9:30 県公式）で前回から変化なし。イオンモール熊本はNHK記事本体で5人死亡のまま（検索見出しの「6人」は誤り）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 14:07', src:'公式', who:'取引校クロール（自動）',
+   title:'14時再クロール：取引校3校に変化なし／県公式の死者数が17人に更新（7/30 9:30）を追記',
+   body:'7/30 14時の再クロールを実施。取引校の熊本県内3校は前回（12時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本は最新7/20付、熊本商業高校はブラウザ描画で確認し最新7/13付と、いずれも地震関連告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（第4回7/29 16時が最新、ページ上は第5回未掲載）に本震以降の新規掲載は確認できず。報道では県公式の死者数・主要被害地点の人数が更新された（下記）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 09:45', src:'報道', who:'NHK',
+   title:'県公式：死者17人・心肺停止6人・安否不明1人（7/30 9:30 災害対策本部会議）',
+   body:'熊本県は7/30 9:30からの災害対策本部会議で、死者17人・心肺停止6人・安否不明少なくとも1人と発表。前日の県公式（7/29 14時時点）の死亡12人から増加した。※NHKが7/30 6:30に報じた「28人」は関連調査中を含む別基準で、本数字は県の確定集計（基準が異なる）。取引校所在の熊本市・玉名市に新たな被害計上は確認できず。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190421000'},
+  {ts:'2026-07-30 10:02', src:'報道', who:'NHK',
+   title:'イオンモール熊本（嘉島町）：5人死亡・1人心肺停止・5人けがに更新',
+   body:'嘉島町のイオンモール熊本の爆発・崩落で、7/30 10時時点で5人死亡・1人心肺停止・5人けがに更新（当初は3人死亡・3人安否不明と報道）。11人が救助された。取引校の所在地とは異なる嘉島町の被害。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190461000'},
+  {ts:'2026-07-30 09:57', src:'報道', who:'NHK',
+   title:'日本製紙八代工場：8人死亡・2人けが・1人安否不明に更新',
+   body:'八代市の日本製紙八代工場で、7/30 9:57時点で救助された10人のうち8人死亡・2人けが・1人安否不明に更新（前日夜は5人死亡・4人安否不明と報道）。取引校の所在地とは異なる八代市の被害。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190441000'},
+  {ts:'2026-07-30 00:39', src:'報道', who:'NHK',
+   title:'政府の地震調査委員会：日奈久断層帯が約30kmずれ動いたか',
+   body:'政府の地震調査委員会は、今回の地震で日奈久断層帯が約30kmにわたりずれ動いたとみられると評価。引き続き同程度の地震への注意が必要としている。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190241000'},
+  {ts:'2026-07-30 12:07', src:'公式', who:'取引校クロール（自動）',
+   title:'12時再クロール：取引校3校に変化なし／死者数の報道更新（関連調査中含め28人）を追記',
+   body:'7/30 12時の再クロールを実施。取引校の熊本県内3校は前回（10時）から変化なし——九州看護福祉大は7/29付の3告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新、クラーク熊本は最新7/20付、熊本商業高校はブラウザ描画で確認し最新7/13付と、いずれも地震関連告知なし。行政も熊本市（新着は7/29更新分まで）・県災害対策本部（第4回7/29 16時が最新、第5回は確認できず）・気象庁（第3報が最新）に本震以降の新規発表は確認できず。報道では死者数が更新された（下記NHK）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/1/274517.html'},
+  {ts:'2026-07-30 06:30', src:'報道', who:'NHK',
+   title:'熊本地震 死者28人に（関連調査中含む・7/30 6:30時点）／日本製紙八代工場は5人死亡・4人安否不明に',
+   body:'NHKは7/30朝、県内の死者が関連調査中を含め28人になったと報道（7/30 6:30時点）。前日の県公式（7/29 14時時点）の死亡12人から増加。八代市の日本製紙八代工場は5人死亡・2人けが・4人安否不明に更新された。取引校所在の熊本市・玉名市に新たな被害報道は確認できず。※報道は関連調査中を含み、県公式の確定集計とは基準が異なる。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015190421000'},
+  {ts:'2026-07-30 10:10', src:'公式', who:'取引校クロール（自動）',
+   title:'10時再クロール：取引校3校の状況に変化なし／新たな余震（7/30 05:16 震度4）のみ追記',
+   body:'7/30 10時の再クロールを実施。取引校の熊本県内3校は前回（8時）から変化なし——九州看護福祉大は7/29付の休校延長告知（7/30以降 対面授業中止・構内立入8/4まで自粛・8/9OC中止）が最新で新規なし、クラーク熊本は最新7/20付、熊本商業高校はブラウザ描画で確認し最新7/13付と、いずれも地震関連告知なし。行政も熊本市（新着は7/29更新まで）・県災害対策本部（第4回7/29 16時が最新、第5回の開催は確認できず）・文科省（第2報7/29 10時が最新）・気象庁（第3報が最新）に本震以降の新規発表は確認できず。唯一、7/30早朝の新たな余震のみ確認（下記）。',
+   url:'https://www.pref.kumamoto.jp/soshiki/1/274517.html'},
+  {ts:'2026-07-30 05:16', src:'公式', who:'気象庁（Yahoo!天気経由確認）',
+   title:'7/30 05:16 熊本県熊本地方でM4.6・最大震度4の余震（津波なし）',
+   body:'7/30 5時16分頃、熊本県熊本地方でM4.6・深さ約10km・最大震度4を観測（震度4は八代市・氷川町）。津波の心配なし。取引校所在地は熊本市中央区・玉名市とも震度2にとどまり、新たな被害告知は確認できず。気象庁は引き続き1週間程度は最大震度7程度の地震に注意を呼びかけ。',
+   url:'https://typhoon.yahoo.co.jp/weather/jp/earthquake/20260730051638.html'},
+  {ts:'2026-07-30 08:10', src:'公式', who:'取引校クロール（自動）',
+   title:'九州看護福祉大：7/30以降も対面授業中止・構内立入8/4まで自粛に更新（取引校で状況変化）',
+   body:'7/30 8時の再クロールで九看大（取引校）の新告知3件を確認（いずれも7/29付）。①7/30(木)以降の対面授業を中止（余震継続のため）、②学生の構内立ち入りを8/4(火)まで自粛要請、③8/9(日)オープンキャンパスを中止（9/6のミニOCは追って案内）。前回（7/29）確認時は「7/29終日休講」のみで、休校が延長された。クラーク熊本（最新7/20付・8/1のOC告知は継続）と熊本商業高校（ブラウザ描画で確認、最新7/13）は新たな地震告知なし。気象庁ページ・県災害対策本部（第4回7/29 16時が最新）に本震以降の新規発表は確認できず。',
+   url:'https://www.kyushu-ns.ac.jp/news/2384621/'},
+  {ts:'2026-07-29 17:00', src:'公式', who:'九州看護福祉大学（取引校）',
+   title:'7/30(木)以降の対面授業を中止／構内立入は8/4まで自粛要請／8/9オープンキャンパス中止',
+   body:'余震継続を受け、学生の安全確保のため7/30(木)以降の対面授業を中止（詳細はCampus Squareで案内）。あわせて構内への立ち入りを8/4(火)まで控えるよう要請。8/9(日)予定のオープンキャンパスも中止（9/6のミニOCは詳細決定次第HPで案内）。※3件とも大学公式サイトに7/29付で掲載。時刻は掲載順からの推定。',
+   url:'https://www.kyushu-ns.ac.jp/news/2384633/'},
+  {ts:'2026-07-29 16:00', src:'公式', who:'熊本県 災害対策本部（第4回会議）',
+   title:'県公式：死亡12人・心肺停止6人・避難8,886人（7/29 14時時点）',
+   body:'県災害対策本部が7/29 16時に第4回会議を開催。人的被害等（7/29 14時時点）は死亡12・心肺停止6・重症8・中等症4・軽症52・分類未確定（安否不明等）15。避難者8,886人、停電34,880戸、断水65,810戸。死亡は八代市8・氷川町3・甲佐町1に集中。取引校所在の熊本市・玉名市に死亡の計上はなく、玉名市は停電・断水の計上もなし。',
+   url:'https://www.pref.kumamoto.jp/soshiki/222/274487.html'},
+  {ts:'2026-07-30 00:30', src:'報道', who:'NHK',
+   title:'熊本で震度7 同程度地震に1週間ほど注意／熱中症対策も呼びかけ',
+   body:'発災から1週間程度は最大震度7程度の地震に注意が必要と気象庁。避難生活の長期化に備え、猛暑下の熱中症対策も呼びかけられている。取引校エリアの続報は各校・県教委の公式発表を要確認。',
+   url:'https://www3.nhk.or.jp/news/'},
+  {ts:'2026-07-29 23:00', src:'SNS', who:'X：グッドネーバーズ・ジャパン（@GNJapan）',
+   title:'国際NGOが緊急支援募金を開始、7/30に県へスタッフ派遣',
+   body:'支援団体による発信。7/30に熊本県へスタッフを派遣し被害状況の把握を行うとする。※支援団体の告知であり学校被害の一次情報ではない。',
+   url:'https://x.com/GNJapan/status/2082320483585028309'},
+  {ts:'2026-07-29 22:19', src:'公式', who:'気象庁（tenki.jp経由確認）',
+   title:'最大震度5弱の余震（本震後で最大規模）／天草・芦北地方 M5.8',
+   body:'7/29 22:19頃、熊本県天草・芦北地方でM5.8・最大震度5弱を観測（八代市・上天草市・天草市で震度5弱）。本震（7/28 M7.1）以降で最大規模の余震。津波の心配なし。同日夜は20:47に有明海でM4.2・震度4も発生し、地震活動が活発な状態が継続。取引校所在の熊本市中央区・玉名市は震度3以下で新たな被害告知は確認できず。',
+   url:'https://earthquake.tenki.jp/bousai/earthquake/detail/2026/07/29/2026-07-29-22-19-39.html'},
+  {ts:'2026-07-29 15:00', src:'報道', who:'Yahoo!ニュース（石渡嶺司）',
+   title:'熊本大は30・31日も終日休講、東海大・九州ルーテルも延長',
+   body:'熊本大学は7/30(木)・31(金)も終日休講とし、8/3(月)以降は7/31 15時頃に案内予定と報じられる。東海大は29〜30日入構禁止・定期試験中止、九州ルーテル学院大は〜8/2立入禁止・対面授業〜8/4中止。取引校の九州看護福祉大は7/30以降の追加告知を確認できず。',
+   url:'https://news.yahoo.co.jp/expert/articles/8f2ed728fb2520e30d52ad319c76f3fe5cd44dde'},
+  {ts:'2026-07-29 10:00', src:'公式', who:'文部科学省',
+   title:'被害情報 第2報：熊本県で学校施設109校が被害、公立9校休校・18校短縮授業',
+   body:'7/29 10時時点。学校施設等の物的被害は6県で計144施設（熊本県109＝国立10・公立54・私立8ほか、福岡6・長崎8・宮崎11・大分2・鹿児島8）。休校・短縮授業は熊本県で公立9校休校・18校短縮、私立1校休校、国立1校休校。県内12校が避難所に。児童生徒の被害は打撲・骨折等の軽傷が中心。※個別校名は非公表。',
+   url:'https://www.mext.go.jp/a_menu/r8kumamotojisin/index.html'},
+  {ts:'2026-07-29 02:43', src:'報道', who:'NHK',
+   title:'熊本城の石垣崩落を28か所で確認／宇城・氷川で車中泊',
+   body:'熊本城で石垣の崩落が28か所確認された。宇城市・氷川町では避難所を開設できず駐車場などを開放し車中泊が発生。各病院にけが人が多数搬送され、停電で機能停止した病院もある。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015189231000'},
+  {ts:'2026-07-29 22:10', src:'公式', who:'取引校クロール（自動）',
+   title:'クラーク熊本・熊本商業：公式に地震告知なし（22時時点）',
+   body:'クラーク記念国際高校 熊本キャンパスは最新告知が7/20付のままで地震関連なし。熊本商業高校サイトも地震関連の休校告知は確認できず（最新7/13）。県内大学が全校休講の状況下にあり、県教委・各校の続報を要確認。',
+   url:'https://www.clark.ed.jp/campus/kumamoto-kumamoto/topics/'},
+  {ts:'2026-07-29 12:00', src:'報道', who:'NHK／Bloomberg／日本経済新聞',
+   title:'熊本県内の死者13人に、イオンモール熊本で3人死亡・3人安否不明',
+   body:'嘉島町イオンモール熊本の建物崩壊で3人死亡・従業員3人が安否不明。八代市の日本製紙工場でも救助が続く。県内で避難指示2.2万人超、9千人超が避難継続（7/29 11時時点）。',
+   url:'https://news.web.nhk/newsweb/na/na-k10015189221000'},
+  {ts:'2026-07-29 11:52', src:'公式', who:'熊本大学',
+   title:'緊急連絡を更新（7/29 11:52）',
+   body:'学生・教職員向け緊急連絡ページを更新。7/29終日休講を継続。',
+   url:'https://www.kumamoto-u.ac.jp/whatsnew/koho/4r8b66/copy_of_20260708-1'},
+  {ts:'2026-07-29 10:00', src:'報道', who:'Yahoo!ニュース（石渡嶺司）',
+   title:'熊本県内の大学は全校が29日休講',
+   body:'県内の大学は全校が7/29休講。東海大は30日も、九州ルーテル学院は8/2まで入校禁止。取引校の九州看護福祉大学（玉名）も終日休講。',
+   url:'https://news.yahoo.co.jp/expert/articles/8f2ed728fb2520e30d52ad319c76f3fe5cd44dde'},
+  {ts:'2026-07-29 09:00', src:'公式', who:'熊本市',
+   title:'区役所窓口対応・道路交通規制・熊本嘉島線の通行止めを公表',
+   body:'7/29更新。区役所窓口対応、主要地方道 熊本嘉島線の一部全面通行止め、道路交通規制情報を公表。市立学校の一斉休業に関する個別告知は本ページ上では未掲載。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-28 21:30', src:'公式', who:'九州看護福祉大学（取引校）',
+   title:'7月29日(水)は終日休講（地震の影響）',
+   body:'地震の影響により7/29(水)の授業を終日休講。補講は後日Campus Squareで案内。取引校の熊本県内3校のうち、公式に休講が確認できたのは本学のみ。',
+   url:'https://www.kyushu-ns.ac.jp/news/2384346/'},
+  {ts:'2026-07-28 23:00', src:'公式', who:'気象庁',
+   title:'最大震度5弱以上の余震が相次ぐ（17:08 天草・芦北でM6.1・震度5弱ほか）',
+   body:'本震後、16:29 M4.5・震度5弱、17:08 熊本県天草・芦北地方 M6.1・震度5弱、19:03 M4.2・震度5弱を観測。1週間程度は最大震度7程度の地震に注意。',
+   url:'https://www.jma.go.jp/jma/menu/20260728_kumamoto_jishin.html'},
+  {ts:'2026-07-29 02:30', src:'公式', who:'熊本市',
+   title:'令和8年熊本地震による施設の閉館・イベント中止情報を更新',
+   body:'市の特設ページで施設閉館・イベント中止情報が随時更新中。市立学校の一斉臨時休業に関する個別告知は本ページ経由で要確認。',
+   url:'https://www.city.kumamoto.jp/list04828.html'},
+  {ts:'2026-07-29 00:00', src:'公式', who:'熊本市',
+   title:'市内保育施設等の開園状況／受験者のみなさまへ 等を公表',
+   body:'保育施設の開園状況、受験生向け案内、災害救助法の適用、り災証明書、図書館の臨時休館などを順次公表。',
+   url:'https://www.city.kumamoto.jp/list04828.html'}
+];
+/* ===== FEED_END ===== */
+
+/* ============================================================
+   データ
+   type: 'client'（顧客校） / 'ref'（参考被害地点・震源）
+   intensity: 表示用文字列 ／ band: 色分け用（7,6.5=6強,6=6弱,5.5=5強,5=5弱,4,3）
+   precise: true=住所ベースの座標 / false=市代表座標（目安）
+   status/statusNote: 確認できた公式情報のみ。未確認は「確認中」
+   sources: [{t:表示名,u:URL}]
+   ============================================================ */
+const DATA = [
+  /* ---- 熊本県 重点顧客校（住所・電話 確認済み） ---- */
+  {type:'client',name:'クラーク記念国際高等学校 熊本キャンパス',cat:'高校（通信制）',pref:'熊本県',city:'熊本市中央区',addr:'熊本市中央区新大江1-27-2',tel:'096-327-8323',lat:32.7900,lng:130.7360,intensity:'震度5強（中央区大江）',band:5.5,precise:true,
+   status:'確認中（校舎被害の報告なし）',statusNote:'キャンパス公式ページを7/31再確認：最新ニュースは7/20付のオープンキャンパス告知等のままで、地震に関する休校・被害の告知は掲載なし。【校舎被害】7/28 18時の県発表（RKK報道）で建物損壊が名指しされた私立高8校（熊本中央・開新・九州学院・慶誠・熊本国府・文徳・八代白百合・城北）に本校は含まれず、外壁破損等の校舎被害は公式・報道とも確認できず。所在地の熊本市中央区は文科省第2報で震度5強、県公式の人的被害14時時点データでも熊本市に死亡の計上なし。8/1にオープンキャンパス予定のため開催可否も要確認。通信制のため一律の休校判断とは異なる可能性あり。',
+   sources:[{t:'クラーク公式：熊本キャンパス（7/29確認）',u:'https://www.clark.ed.jp/campus/kumamoto-kumamoto/'},{t:'熊本市 令和8年熊本地震 特設ページ',u:'https://www.city.kumamoto.jp/list04828.html'}]},
+  {type:'client',name:'熊本県立熊本商業高等学校',cat:'高校（県立）',pref:'熊本県',city:'熊本市中央区',addr:'熊本市中央区神水1-1-2',tel:'096-384-1551',lat:32.7969,lng:130.7443,intensity:'震度5強（中央区）',band:5.5,precise:true,
+   status:'確認中（校舎被害の報告なし）',statusNote:'7/31にブラウザ描画で再確認：学校公式サイトの最新掲載は7/13付の部活動記事のままで、地震に関する休校・被害の告知は確認できず。【校舎被害】7/28 18時の県発表（RKK報道）で建物損壊が名指しされたのは私立高8校（熊本中央・開新・九州学院ほか）で、県立の本校は含まれず外壁破損等の校舎被害は公式・報道とも確認できず。文科省第2報（7/29 10時）では熊本県内の公立学校9校が休校・18校が短縮授業だが個別校名は非公表のため、県立の本校が該当するかは県教委の一斉連絡を要確認。県公式の人的被害14時時点データでも熊本市に死亡の計上なし。※検索上位に出る「県立高等学校の休校情報」は2016年熊本地震のアーカイブ資料（kumamoto-archive.jp）であり今回のものではない点に注意。',
+   sources:[{t:'学校公式サイト',u:'https://kumasho.ed.jp/'},{t:'文科省 令和8年熊本地震（被害情報）',u:'https://www.mext.go.jp/a_menu/r8kumamotojisin/index.html'},{t:'熊本県教育委員会 学校・施設情報',u:'https://www.pref.kumamoto.jp/site/kyouiku/list11-557.html'}]},
+  {type:'client',name:'九州看護福祉大学',cat:'大学',pref:'熊本県',city:'玉名市',addr:'玉名市富尾888',tel:'0968-75-1834',lat:32.9127,lng:130.5726,intensity:'震度4〜5弱（玉名市）',band:5,precise:true,
+   status:'休校継続（7/30以降 対面授業中止）',statusNote:'大学公式が7/29付で告知を更新：余震継続を受け7/30(木)以降の対面授業を中止（当初の7/29終日休講から延長。詳細はCampus Squareで案内）。あわせて学生の構内立ち入りを8/4(火)まで自粛要請、8/9(日)オープンキャンパスも中止（9/6ミニOCは追って案内）。7/31再確認で変化なし。【校舎被害】公式告知3件の理由はいずれも「余震継続による学生の安全確保」で校舎の破損・被害への言及はなく、外壁破損等の校舎被害は公式・報道とも確認できず。県公式の人的被害14時時点データでは所在地の玉名市は人的被害・停電・断水いずれも計上なし。県内の他大学（熊本大は30・31日も休講、東海大・九州ルーテル等）も休講を延長。文科省第2報では玉名市は震度5弱。',
+   sources:[{t:'大学公式：7月30日(木)以降の授業について',u:'https://www.kyushu-ns.ac.jp/news/2384621/'},{t:'大学公式：本学構内への立ち入りについて（8/4まで）',u:'https://www.kyushu-ns.ac.jp/news/2384633/'},{t:'大学公式：8月9日オープンキャンパス中止',u:'https://www.kyushu-ns.ac.jp/news/2384617/'},{t:'大学公式：7月29日(水)の授業について',u:'https://www.kyushu-ns.ac.jp/news/2384346/'}]},
+
+  /* ---- 福岡県 ---- */
+  {type:'client',name:'西南学院高等学校',cat:'高校（私立）',pref:'福岡県',city:'福岡市早良区',addr:'福岡市早良区百道浜1-1-1',tel:'',lat:33.5905,lng:130.3560,intensity:'震度4（福岡市）',band:4,precise:false,status:'確認中',statusNote:'福岡市は震度4。連絡先・状況は公式で要確認。',sources:[{t:'公式サイト',u:'https://www.seinan.ed.jp/'}]},
+  {type:'client',name:'上智福岡高等学校',cat:'高校（私立）',pref:'福岡県',city:'福岡市中央区',addr:'福岡市中央区赤坂',tel:'',lat:33.5860,lng:130.3830,intensity:'震度4（福岡市）',band:4,precise:false,status:'確認中',statusNote:'福岡市は震度4。',sources:[{t:'公式サイト',u:'https://www.sophia-fukuoka.ed.jp/'}]},
+  {type:'client',name:'福岡舞鶴高等学校',cat:'高校（私立）',pref:'福岡県',city:'福岡市西区',addr:'福岡市西区',tel:'',lat:33.5700,lng:130.2600,intensity:'震度4（福岡市）',band:4,precise:false,status:'確認中',statusNote:'福岡市は震度4。',sources:[{t:'公式サイト',u:'https://www.maizuru.ed.jp/'}]},
+  {type:'client',name:'東福岡高等学校',cat:'高校（私立）',pref:'福岡県',city:'福岡市博多区',addr:'福岡市博多区',tel:'',lat:33.5960,lng:130.4290,intensity:'震度4（福岡市）',band:4,precise:false,status:'確認中',statusNote:'福岡市は震度4。',sources:[{t:'公式サイト',u:'https://www.higashi.ed.jp/'}]},
+  {type:'client',name:'久留米大学附設中学校・高等学校',cat:'中高一貫（私立）',pref:'福岡県',city:'久留米市',addr:'久留米市野中町20-2',tel:'',lat:33.3050,lng:130.5400,intensity:'震度4（久留米市）',band:4,precise:false,status:'確認中',statusNote:'久留米市は震度4。',sources:[{t:'公式サイト',u:'https://www.fusetsu.ed.jp/'}]},
+  {type:'client',name:'柳川高等学校',cat:'高校（私立）',pref:'福岡県',city:'柳川市',addr:'柳川市本城町',tel:'',lat:33.1630,lng:130.4060,intensity:'震度5弱（柳川市）',band:5,precise:false,status:'確認中',statusNote:'柳川市本町で震度5弱を観測。要確認度やや高。',sources:[{t:'公式サイト',u:'https://www.yanagawa-hs.ac.jp/'}]},
+  {type:'client',name:'福岡県立鞍手高等学校',cat:'高校（県立）',pref:'福岡県',city:'鞍手郡',addr:'鞍手郡鞍手町',tel:'',lat:33.7480,lng:130.6420,intensity:'震度3〜4（鞍手・直方）',band:4,precise:false,status:'確認中',statusNote:'県北部は震度3〜4。',sources:[{t:'県立学校一覧（福岡県）',u:'https://www.pref.fukuoka.lg.jp/'}]},
+  {type:'client',name:'福岡県立博多青松高等学校',cat:'高校（県立）',pref:'福岡県',city:'福岡市東区',addr:'福岡市東区',tel:'',lat:33.6560,lng:130.4270,intensity:'震度4（福岡市）',band:4,precise:false,status:'確認中',statusNote:'福岡市は震度4。',sources:[{t:'公式サイト',u:'https://hakataseisho.fku.ed.jp/'}]},
+
+  /* ---- 佐賀県 ---- */
+  {type:'client',name:'佐賀県立伊万里高等学校',cat:'高校（県立）',pref:'佐賀県',city:'伊万里市',addr:'伊万里市立花町',tel:'',lat:33.2680,lng:129.8830,intensity:'震度3（伊万里）',band:3,precise:false,status:'確認中',statusNote:'県西部は震度3程度。',sources:[{t:'佐賀県教育委員会',u:'https://www.pref.saga.lg.jp/kyouiku/'}]},
+  {type:'client',name:'佐賀県教育委員会',cat:'行政（教委）',pref:'佐賀県',city:'佐賀市',addr:'佐賀市城内1-1-59',tel:'',lat:33.2494,lng:130.2988,intensity:'震度4（佐賀市）',band:4,precise:false,status:'確認中',statusNote:'佐賀市は震度4。管内校の一斉対応は公式で要確認。',sources:[{t:'佐賀県教育委員会',u:'https://www.pref.saga.lg.jp/kyouiku/'}]},
+
+  /* ---- 長崎県 ---- */
+  {type:'client',name:'長崎日本大学中学校・高等学校',cat:'中高一貫（私立）',pref:'長崎県',city:'諫早市',addr:'諫早市貝津町',tel:'',lat:32.8420,lng:130.0330,intensity:'震度5弱（諫早市）',band:5,precise:false,status:'確認中',statusNote:'諫早市多良見で震度5弱。要確認度やや高。',sources:[{t:'公式サイト',u:'https://www.nagasaki-nichidai.ed.jp/'}]},
+
+  /* ---- 大分県 ---- */
+  {type:'client',name:'岩田中学校・高等学校',cat:'中高一貫（私立）',pref:'大分県',city:'大分市',addr:'大分市岩田町',tel:'',lat:33.2270,lng:131.6480,intensity:'震度3〜4（大分市）',band:4,precise:false,status:'確認中',statusNote:'大分市は震度3〜4。',sources:[{t:'公式サイト',u:'https://iwata.ed.jp/'}]},
+  {type:'client',name:'日本文理大学附属高等学校',cat:'高校（私立）',pref:'大分県',city:'大分市',addr:'大分市一木',tel:'',lat:33.2560,lng:131.7300,intensity:'震度3〜4（大分市）',band:4,precise:false,status:'確認中',statusNote:'大分市は震度3〜4。',sources:[{t:'公式サイト',u:'https://www.nbufuko.ed.jp/'}]},
+
+  /* ---- 宮崎県 ---- */
+  {type:'client',name:'宮崎県立日向高等学校',cat:'高校（県立）',pref:'宮崎県',city:'日向市',addr:'日向市向江町',tel:'',lat:32.4210,lng:131.6220,intensity:'震度4〜5弱（日向市）',band:5,precise:false,status:'確認中',statusNote:'日向市東郷で震度5弱、富高で震度4。',sources:[{t:'宮崎県教育委員会',u:'https://www.pref.miyazaki.lg.jp/kyoiku/'}]},
+  {type:'client',name:'宮崎国際大学',cat:'大学',pref:'宮崎県',city:'宮崎市',addr:'宮崎市清武町加納丙',tel:'',lat:31.8390,lng:131.3910,intensity:'震度3〜4（宮崎市）',band:4,precise:false,status:'確認中',statusNote:'宮崎市清武で震度4。',sources:[{t:'公式サイト',u:'https://www.miuedu.ac.jp/'}]},
+  {type:'client',name:'宮崎市立大塚中学校',cat:'中学（市立）',pref:'宮崎県',city:'宮崎市',addr:'宮崎市大塚町',tel:'',lat:31.9080,lng:131.3960,intensity:'震度3〜4（宮崎市）',band:4,precise:false,status:'確認中',statusNote:'宮崎市は震度3〜4。',sources:[{t:'宮崎市教育委員会',u:'https://www.city.miyazaki.miyazaki.jp/'}]},
+  {type:'client',name:'新富町立新田中学校',cat:'中学（町立）',pref:'宮崎県',city:'児湯郡新富町',addr:'児湯郡新富町',tel:'',lat:32.0680,lng:131.4640,intensity:'震度4（新富町）',band:4,precise:false,status:'確認中',statusNote:'新富町上富田で震度4。',sources:[{t:'新富町',u:'https://www.town.shintomi.lg.jp/'}]},
+
+  /* ---- 鹿児島県 ---- */
+  {type:'client',name:'鹿児島純心中学校・高等学校',cat:'中高一貫（私立）',pref:'鹿児島県',city:'鹿児島市',addr:'鹿児島市唐湊',tel:'',lat:31.5680,lng:130.5390,intensity:'震度4（鹿児島市）',band:4,precise:false,status:'確認中',statusNote:'鹿児島市は震度4。',sources:[{t:'公式サイト',u:'https://www.k-junshin.ac.jp/jhs/'}]},
+  {type:'client',name:'鹿児島実業高等学校',cat:'高校（私立）',pref:'鹿児島県',city:'鹿児島市',addr:'鹿児島市五ケ別府町',tel:'',lat:31.6180,lng:130.5060,intensity:'震度4（鹿児島市）',band:4,precise:false,status:'確認中',statusNote:'鹿児島市は震度4。',sources:[{t:'公式サイト',u:'https://www.kajitsu.ac.jp/'}]},
+  {type:'client',name:'鹿児島市立鹿児島玉龍中学校・高等学校',cat:'中高一貫（市立）',pref:'鹿児島県',city:'鹿児島市',addr:'鹿児島市池之上町',tel:'',lat:31.6020,lng:130.5560,intensity:'震度4（鹿児島市）',band:4,precise:false,status:'確認中',statusNote:'鹿児島市は震度4。',sources:[{t:'鹿児島市教育委員会',u:'https://www.city.kagoshima.lg.jp/'}]},
+  {type:'client',name:'姶良市立加治木中学校',cat:'中学（市立）',pref:'鹿児島県',city:'姶良市',addr:'姶良市加治木町',tel:'',lat:31.7360,lng:130.6570,intensity:'震度5弱（姶良市）',band:5,precise:false,status:'確認中',statusNote:'姶良市加治木町本町で震度5弱。要確認度やや高。',sources:[{t:'姶良市',u:'https://www.city.aira.lg.jp/'}]},
+  {type:'client',name:'霧島市立横川中学校',cat:'中学（市立）',pref:'鹿児島県',city:'霧島市',addr:'霧島市横川町',tel:'',lat:31.8560,lng:130.6790,intensity:'震度5弱（霧島市）',band:5,precise:false,status:'確認中',statusNote:'霧島市隼人町で震度5弱。',sources:[{t:'霧島市',u:'https://www.city-kirishima.jp/'}]},
+  {type:'client',name:'鹿児島県立隼人工業高等学校',cat:'高校（県立）',pref:'鹿児島県',city:'霧島市',addr:'霧島市隼人町',tel:'',lat:31.7420,lng:130.7530,intensity:'震度5弱（霧島市）',band:5,precise:false,status:'確認中',statusNote:'霧島市隼人町で震度5弱。',sources:[{t:'鹿児島県教育委員会',u:'https://www.pref.kagoshima.jp/kyoiku/'}]},
+
+  /* ---- 沖縄県 ---- */
+  {type:'client',name:'昭和薬科大学附属中学校・高等学校',cat:'中高一貫（私立）',pref:'沖縄県',city:'中頭郡西原町',addr:'中頭郡西原町字翁長',tel:'',lat:26.2560,lng:127.7660,intensity:'揺れ観測なし（遠隔）',band:3,precise:false,status:'影響なしと推定',statusNote:'沖縄県は今回の地震の有感範囲外。直接の影響は極めて小さいと推定。',sources:[{t:'公式サイト',u:'https://www.showa-pharm.ac.jp/hs/'}]},
+
+  /* ---- 参考：主な被害地点・震源（報道ベース） ---- */
+  {type:'ref',name:'【震源】熊本県熊本地方',cat:'震源',pref:'熊本県',city:'—',addr:'—',tel:'',lat:32.600,lng:130.700,intensity:'M7.1 / 深さ約10km',band:7,precise:false,
+   status:'震源',statusNote:'2026/07/28 16:27頃発生。M7.1、最大震度7。有明海・八代海に津波注意報（後解除）。',
+   sources:[{t:'気象庁：令和8年熊本地震 関連情報',u:'https://www.jma.go.jp/jma/menu/20260728_kumamoto_jishin.html'}]},
+  {type:'ref',name:'宇城市豊野町（震度7）／住宅倒壊',cat:'被害地点',pref:'熊本県',city:'宇城市',addr:'宇城市豊野町',tel:'',lat:32.6060,lng:130.7480,intensity:'震度7',band:7,precise:false,
+   status:'被害あり（報道）',statusNote:'震度7を観測。住宅倒壊により高齢男性1人が巻き込まれ救助活動（報道）。',
+   sources:[{t:'NHK：宇城 住宅倒壊 救助活動',u:'https://www3.nhk.or.jp/news/'},{t:'ウェザーニュース：市町村別震度',u:'https://weathernews.jp/news/202607/281627quake/'}]},
+  {type:'ref',name:'氷川町島地（震度7）／家屋倒壊',cat:'被害地点',pref:'熊本県',city:'氷川町',addr:'八代郡氷川町島地',tel:'',lat:32.5770,lng:130.6550,intensity:'震度7',band:7,precise:false,
+   status:'被害あり（報道）',statusNote:'震度7を観測。家屋倒壊で道路が塞がれる被害（報道）。',
+   sources:[{t:'ウェザーニュース：被害状況',u:'https://weathernews.jp/news/202607/280351/'}]},
+  {type:'ref',name:'八代市 日本製紙八代工場',cat:'被害地点',pref:'熊本県',city:'八代市',addr:'八代市',tel:'',lat:32.5060,lng:130.6010,intensity:'震度6強〜6弱地域',band:6.5,precise:false,
+   status:'人的被害（報道）',statusNote:'7/28夜は2人心肺停止・9人安否不明との報告。7/30 9:57のNHK報道で、救助された10人のうち8人死亡・2人けが・1人安否不明に更新された。',
+   sources:[{t:'NHK：日本製紙八代工場 8人死亡（7/30 9:57）',u:'https://news.web.nhk/newsweb/na/na-k10015190441000'}]},
+  {type:'ref',name:'イオンモール熊本（嘉島町）',cat:'被害地点',pref:'熊本県',city:'上益城郡嘉島町',addr:'上益城郡嘉島町',tel:'',lat:32.7120,lng:130.7500,intensity:'震度6弱地域周辺',band:6,precise:false,
+   status:'5人死亡・1人心肺停止（報道）',statusNote:'ガス漏れが原因とみられる爆発・2階崩落。7/30 10時のNHK報道で、11人が救助され5人死亡・1人心肺停止・5人けがに更新（当初は3人死亡・3人安否不明）。',
+   sources:[{t:'NHK：イオンモール熊本 5人死亡（7/30 10:02）',u:'https://news.web.nhk/newsweb/na/na-k10015190461000'},{t:'日本経済新聞：イオンモール熊本 爆発',u:'https://www.nikkei.com/'}]},
+  {type:'ref',name:'益城町宮園（震度6強）',cat:'被害地点',pref:'熊本県',city:'益城町',addr:'上益城郡益城町宮園',tel:'',lat:32.7970,lng:130.8190,intensity:'震度6強',band:6.5,precise:false,
+   status:'強い揺れ（報道）',statusNote:'震度6強を観測。2016年熊本地震で甚大被害を受けた地域。',
+   sources:[{t:'ウェザーニュース：市町村別震度',u:'https://weathernews.jp/news/202607/281627quake/'}]}
+];
+
+/* ---- 色 ---- */
+function bandColor(b){
+  if(b>=7) return getCss('--s7');
+  if(b>=6.5) return getCss('--s6s');
+  if(b>=6) return getCss('--s6w');
+  if(b>=5.5) return getCss('--s5s');
+  if(b>=5) return getCss('--s5w');
+  if(b>=4) return getCss('--s4');
+  return getCss('--s3');
+}
+function getCss(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+/* ---- 地図 ---- */
+const map = L.map('map',{zoomControl:true}).setView([32.72,130.70],9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom:18, attribution:'&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const markers = [];
+function makeIcon(d){
+  const c = bandColor(d.band);
+  if(d.type==='ref'){
+    return L.divIcon({className:'',html:
+      `<div style="width:20px;height:20px;background:${getCss('--dmg')};border:3px solid #fff;border-radius:4px;transform:rotate(45deg);box-shadow:0 0 0 1px #0006"></div>`,
+      iconSize:[20,20],iconAnchor:[10,10]});
+  }
+  return L.divIcon({className:'',html:
+    `<div style="width:22px;height:22px;background:${c};border:3px solid #fff;border-radius:50%;box-shadow:0 1px 4px #0008;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;font-weight:700">${d.pref==='熊本県'?'★':''}</div>`,
+    iconSize:[22,22],iconAnchor:[11,11]});
+}
+function popupHtml(d){
+  const tel = d.tel ? `<tr><td class="k">電話</td><td class="tel"><a href="tel:${d.tel.replace(/-/g,'')}">${d.tel}</a></td></tr>`
+                    : `<tr><td class="k">電話</td><td>要確認（公式サイト参照）</td></tr>`;
+  const prec = d.precise ? '' : ' <span class="pill">座標：市の目安</span>';
+  const src = (d.sources||[]).map(s=>`<a href="${s.u}" target="_blank" rel="noopener">▸ ${s.t}</a>`).join('');
+  return `<div class="lp">
+    <b>${d.name}</b>${prec}<br>
+    <span class="pill">${d.type==='client'?'顧客校':'参考'}</span>
+    <span class="pill">${d.cat}</span>
+    <table>
+      <tr><td class="k">状況</td><td><strong>${d.status}</strong></td></tr>
+      <tr><td class="k">震度</td><td>${d.intensity}</td></tr>
+      <tr><td class="k">所在</td><td>${d.addr}</td></tr>
+      ${tel}
+    </table>
+    <div style="font-size:11.5px;color:#334155">${d.statusNote||''}</div>
+    <div class="src" style="margin-top:6px">${src}</div>
+  </div>`;
+}
+
+DATA.forEach((d,i)=>{
+  const m = L.marker([d.lat,d.lng],{icon:makeIcon(d)}).bindPopup(popupHtml(d),{maxWidth:320});
+  m._d = d; m._i = i;
+  markers.push(m);
+});
+
+/* ---- フィルタ ---- */
+function applyFilter(){
+  const on = {};
+  document.querySelectorAll('.flt').forEach(c=>on[c.value]=c.checked);
+  markers.forEach(m=>{
+    const d = m._d;
+    let show = (d.type==='client'&&on.client) || (d.type==='ref'&&on.ref);
+    if(on.kumaonly && d.pref!=='熊本県') show=false;
+    if(show){ if(!map.hasLayer(m)) m.addTo(map);} else { if(map.hasLayer(m)) map.removeLayer(m);}
+  });
+  updateKpis();
+}
+document.querySelectorAll('.flt').forEach(c=>c.addEventListener('change',applyFilter));
+
+/* ---- KPI ---- */
+function updateKpis(){
+  const clients = DATA.filter(d=>d.type==='client');
+  document.getElementById('kpi-client').textContent = clients.length;
+  document.getElementById('kpi-kumamoto').textContent = clients.filter(d=>d.pref==='熊本県').length;
+  document.getElementById('kpi-high').textContent = clients.filter(d=>d.band>=6).length;
+  document.getElementById('kpi-confirm').textContent = clients.filter(d=>d.status.indexOf('確認中')>=0).length;
+}
+
+/* ---- 一覧 ---- */
+const listEl = document.getElementById('school-list');
+DATA.filter(d=>d.type==='client')
+  .sort((a,b)=> b.band-a.band || (a.pref==='熊本県'?-1:1))
+  .forEach(d=>{
+  const idx = markers.findIndex(m=>m._d===d);
+  const li = document.createElement('li');
+  const col = bandColor(d.band);
+  li.innerHTML = `<div class="sl-name">${d.name}
+      <span class="badge" style="background:${col}">${d.intensity.replace(/（.*?）/,'')}</span></div>
+    <div class="sl-sub">${d.pref}・${d.city}｜${d.cat}｜状況：${d.status}</div>`;
+  li.addEventListener('click',()=>{
+    map.setView([d.lat,d.lng], d.precise?15:12);
+    markers[idx].openPopup();
+  });
+  listEl.appendChild(li);
+});
+
+/* ---- 更新フィード ---- */
+const SRC_COLOR = {'公式':'#0ea5e9','報道':'#a855f7','SNS':'#f59e0b'};
+function renderFeed(){
+  const on = {};
+  document.querySelectorAll('.sflt').forEach(c=>on[c.value]=c.checked);
+  const el = document.getElementById('feed-list');
+  el.innerHTML='';
+  FEED.filter(f=>on[f.src])
+      .sort((a,b)=> b.ts.localeCompare(a.ts))
+      .forEach(f=>{
+    const li=document.createElement('li');
+    const unconf = f.src==='SNS' ? ' <span class="pill" style="border-color:#f59e0b;color:#f59e0b">未確認</span>' : '';
+    li.innerHTML = `<div class="sl-name">
+        <span class="badge" style="background:${SRC_COLOR[f.src]}">${f.src}</span>${unconf}
+        <span style="display:block;margin-top:3px">${f.title}</span></div>
+      <div class="sl-sub">${f.ts}｜${f.who}</div>
+      <div class="sl-sub" style="color:#cbd5e1;margin-top:4px">${f.body}</div>
+      ${f.url?`<div class="sl-sub" style="margin-top:4px"><a href="${f.url}" target="_blank" rel="noopener">▸ 情報源を開く</a></div>`:''}`;
+    li.style.cursor='default';
+    el.appendChild(li);
+  });
+  if(!el.children.length) el.innerHTML='<li style="cursor:default;color:#94a3b8">該当する更新はありません</li>';
+}
+document.querySelectorAll('.sflt').forEach(c=>c.addEventListener('change',renderFeed));
+document.getElementById('last-updated').textContent = '最終更新：'+LAST_UPDATED;
+
+applyFilter();
+updateKpis();
+renderFeed();
+</script>
+</body>
+</html>
